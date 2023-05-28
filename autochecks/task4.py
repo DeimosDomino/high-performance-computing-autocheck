@@ -1,4 +1,4 @@
-import subprocess, sys
+import subprocess, sys, re
 
 imports_to_add = '''
 #include <iostream>
@@ -13,31 +13,46 @@ imports_to_add = '''
 
 code_to_add = '''
 
-template<class T>
-void LockFreeStack<T>::push(const T &value) {
-    auto newNode = std::make_shared<Node<T>>(std::move(value));
-
-    std::shared_ptr<Node<T>> first{};
-    do {
-        first = front;
-        newNode->next = first;
-    } while (!std::atomic_compare_exchange_weak(&front, &first, newNode));
-}
-
-template<class T>
-int LockFreeStack<T>::length(){
-    std::shared_ptr<Node<T>> cur = this->front;
+template<typename T>
+int LockFreeQueue<T>::length(){
+    std::shared_ptr<Node<T>> cur = this->head;
     int length = 0;
     while(cur != nullptr){
         cur = cur->next;
         length++;
     }
-    return length;
+    return length - this->hasFakeNode;
+}
+
+template<typename T>
+void LockFreeQueue<T>::checkFakeNode(){
+    if(this->head == this->tail && this->head != nullptr)
+        this->hasFakeNode = true; 
+}
+
+template<typename T>
+T LockFreeQueue<T>::pop(){
+    while(true){
+        std::shared_ptr<Node<T>> first = this->head;
+        std::shared_ptr<Node<T>> next = first->next;
+        std::shared_ptr<Node<T>> last = this->tail;
+        if(next != nullptr){
+            if(first == tail){
+                std::atomic_compare_exchange_weak(&tail, &last, next);
+            } else {
+                int value = first->value;
+                if(std::atomic_compare_exchange_weak(&this->head, &first, next)){
+                    return value;
+                }
+            }
+        }
+    }
 }
 
 
 int main(){
-    LockFreeStack<int> stack{};
+    LockFreeQueue<int> queue{};
+    queue.checkFakeNode();
     srand((unsigned)time(NULL));
 
 
@@ -51,9 +66,9 @@ int main(){
         rightLength += pushCount;
         
         threads.push_back(new std::thread(
-                [&stack, pushCount](){  
+                [&queue, pushCount](){  
                     for(int i = 0;i < pushCount;i++){
-                        stack.push(rand() % 100);
+                        queue.push(rand() % 100);
                     }
                 }   
             )
@@ -64,9 +79,12 @@ int main(){
     for(int i = 0;i < count;i++) threads[i]->join();
     for(int i = 0;i < count;i++) delete threads[i];
 
+
+
+
     std::string result = "Wrong asnwer";
 
-    if(stack.length() == rightLength) result = "OK";
+    if(queue.length() == rightLength) result = "OK";
     std::cout << result << std::endl;
     return 0;
 }
@@ -86,6 +104,18 @@ def check(reply, clue):
 
 # Write the student code to a file prog.cpp
 student_answer = """{{ STUDENT_ANSWER | e('py') }}"""
+
+functions_to_add = '''
+public:
+    bool hasFakeNode = false;
+    int length();
+    void checkFakeNode();
+    T pop();
+'''
+
+splitted = re.split(r'LockFreeQueue\s*{', student_answer)
+student_answer = splitted[0] + 'LockFreeQueue {' + functions_to_add + splitted[1]
+
 with open("prog.cpp", "w") as src:
     print(imports_to_add, file=src)
     print(student_answer, file=src)
